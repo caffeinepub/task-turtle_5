@@ -15,7 +15,9 @@ import { Info, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import type { Payment } from "../backend.d";
+import StripeSetup from "../components/StripeSetup";
 import { useBackend } from "../hooks/useBackend";
+import { useCreateCheckoutSession } from "../hooks/useCreateCheckoutSession";
 import type { AppUser } from "../types/app";
 
 interface WalletPageProps {
@@ -30,7 +32,8 @@ export default function WalletPage({ onUpdateBalance }: WalletPageProps) {
   const [loadingBal, setLoadingBal] = useState(false);
   const [loadingHist, setLoadingHist] = useState(false);
   const [addAmount, setAddAmount] = useState("");
-  const [adding, setAdding] = useState(false);
+
+  const checkoutMutation = useCreateCheckoutSession();
 
   const loadData = useCallback(async () => {
     if (!backend) return;
@@ -56,32 +59,30 @@ export default function WalletPage({ onUpdateBalance }: WalletPageProps) {
     loadData();
   }, [loadData]);
 
-  const handleAddMoney = async () => {
-    if (!addAmount || Number(addAmount) <= 0) {
+  const triggerCheckout = async (amount: number) => {
+    if (!amount || amount <= 0) {
       toast.error("Enter a valid amount");
       return;
     }
-    if (!backend) return;
-    setAdding(true);
     try {
-      const newBal = await backend.addToWallet(
-        BigInt(Math.round(Number(addAmount))),
+      const session = await checkoutMutation.mutateAsync(amount);
+      window.location.href = session.url;
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to start checkout",
       );
-      setBalance(Number(newBal));
-      onUpdateBalance(Number(newBal));
-      toast.success(`₹${addAmount} added to wallet!`);
-      setAddAmount("");
-      loadData();
-    } catch {
-      toast.error("Failed to add money");
-    } finally {
-      setAdding(false);
     }
+  };
+
+  const handleAddMoney = () => {
+    triggerCheckout(Number(addAmount));
   };
 
   return (
     <main className="max-w-2xl mx-auto px-4 py-6">
       <h1 className="text-2xl font-extrabold text-foreground mb-6">Wallet</h1>
+
+      <StripeSetup />
 
       <Card
         className="rounded-3xl border-0 shadow-card mb-6 overflow-hidden"
@@ -105,7 +106,9 @@ export default function WalletPage({ onUpdateBalance }: WalletPageProps) {
 
       <Card className="rounded-2xl border border-border shadow-card mb-6">
         <CardHeader>
-          <CardTitle className="text-base font-bold">Add Money</CardTitle>
+          <CardTitle className="text-base font-bold">
+            Add Money via Stripe
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex gap-3">
@@ -124,15 +127,15 @@ export default function WalletPage({ onUpdateBalance }: WalletPageProps) {
               <Button
                 className="rounded-full bg-brand-green text-brand-dark font-bold hover:bg-brand-green-hover"
                 onClick={handleAddMoney}
-                disabled={adding}
+                disabled={checkoutMutation.isPending}
                 data-ocid="wallet.primary_button"
               >
-                {adding ? (
+                {checkoutMutation.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <>
                     <Plus className="h-4 w-4 mr-1" />
-                    Add
+                    Pay
                   </>
                 )}
               </Button>
@@ -144,13 +147,28 @@ export default function WalletPage({ onUpdateBalance }: WalletPageProps) {
                 key={amt}
                 type="button"
                 className="rounded-full bg-muted text-muted-foreground text-xs px-3 py-1 hover:bg-accent transition-colors"
-                onClick={() => setAddAmount(amt.toString())}
+                onClick={() => triggerCheckout(amt)}
+                disabled={checkoutMutation.isPending}
                 data-ocid="wallet.button"
               >
                 ₹{amt}
               </button>
             ))}
           </div>
+          <p className="text-xs text-muted-foreground mt-3 flex items-center gap-1">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              className="w-3.5 h-3.5 text-brand-green"
+              aria-hidden="true"
+            >
+              <path
+                d="M12 2a10 10 0 100 20A10 10 0 0012 2zm0 14a1 1 0 110-2 1 1 0 010 2zm1-5a1 1 0 11-2 0V8a1 1 0 112 0v3z"
+                fill="currentColor"
+              />
+            </svg>
+            You'll be redirected to Stripe's secure checkout
+          </p>
         </CardContent>
       </Card>
 

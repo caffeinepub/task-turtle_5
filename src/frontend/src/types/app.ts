@@ -4,7 +4,9 @@ export type View =
   | "customer-dashboard"
   | "tasker-dashboard"
   | "live-task"
-  | "wallet";
+  | "wallet"
+  | "payment-success"
+  | "payment-failure";
 
 export interface AppUser {
   name: string;

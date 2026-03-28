@@ -1,10 +1,11 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Loader2, Turtle } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, Loader2, Shield, Turtle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useBackend } from "../hooks/useBackend";
+import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import type { AppUser } from "../types/app";
 
 interface LoginPageProps {
@@ -13,59 +14,92 @@ interface LoginPageProps {
 }
 
 export default function LoginPage({ onLogin, onBack }: LoginPageProps) {
-  const { backend } = useBackend();
+  const { backend, isLoading: backendLoading } = useBackend();
+  const { login, clear, loginStatus, identity, isInitializing, isLoggingIn } =
+    useInternetIdentity();
+
   const [role, setRole] = useState<"customer" | "tasker">("customer");
-  const [step, setStep] = useState<"info" | "otp">("info");
+  const [step, setStep] = useState<"role" | "setup">("role");
   const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [otp, setOtp] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [checkingProfile, setCheckingProfile] = useState(false);
 
-  const handleSendOTP = () => {
-    if (!name.trim() || !phone.trim()) {
-      toast.error("Please fill in name and phone");
-      return;
-    }
-    toast.success("OTP sent! Use 1234 for demo.");
-    setStep("otp");
-  };
+  // Use refs to avoid stale closures without re-triggering the effect
+  const onLoginRef = useRef(onLogin);
+  onLoginRef.current = onLogin;
+  const clearRef = useRef(clear);
+  clearRef.current = clear;
+  const roleRef = useRef(role);
+  roleRef.current = role;
 
-  const handleVerifyOTP = async () => {
-    if (otp !== "1234") {
-      toast.error("Incorrect OTP. Use 1234 for demo.");
+  useEffect(() => {
+    if (!identity || !backend || backendLoading) return;
+    if (loginStatus !== "success" && loginStatus !== "idle") return;
+
+    setCheckingProfile(true);
+    backend
+      .getMyProfile()
+      .then((profileOpt) => {
+        if (profileOpt.__kind__ === "Some") {
+          const u = profileOpt.value;
+          toast.success(`Welcome back, ${u.name}!`);
+          onLoginRef.current({
+            name: u.name,
+            phone: u.phone,
+            email: u.email,
+            role: roleRef.current,
+            walletBalance: Number(u.walletBalance),
+          });
+        } else {
+          setStep("setup");
+          setCheckingProfile(false);
+        }
+      })
+      .catch(() => {
+        setCheckingProfile(false);
+        toast.error("Failed to load profile. Please try again.");
+        clearRef.current();
+      });
+  }, [identity, backend, backendLoading, loginStatus]);
+
+  const handleSaveProfile = async () => {
+    if (!name.trim()) {
+      toast.error("Please enter your name");
       return;
     }
     if (!backend) {
       toast.error("Connecting to network...");
       return;
     }
-    setLoading(true);
+    setSaving(true);
     try {
-      const user = await backend.createOrUpdateUser(
-        name,
-        phone,
-        email || "",
+      const u = await backend.createOrUpdateUser(
+        name.trim(),
+        "",
+        "",
         28.6139,
         77.209,
       );
       if (role === "tasker") {
         await backend.toggleTaskerMode(true);
       }
-      toast.success(`Welcome, ${user.name}!`);
+      toast.success(`Welcome, ${u.name}!`);
       onLogin({
-        name: user.name,
-        phone: user.phone,
-        email: user.email,
+        name: u.name,
+        phone: u.phone,
+        email: u.email,
         role,
-        walletBalance: Number(user.walletBalance),
+        walletBalance: Number(u.walletBalance),
       });
     } catch {
-      toast.error("Login failed. Please try again.");
+      toast.error("Failed to save profile. Please try again.");
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
+
+  const isAuthLoading =
+    isInitializing || isLoggingIn || checkingProfile || saving;
 
   return (
     <div
@@ -90,18 +124,16 @@ export default function LoginPage({ onLogin, onBack }: LoginPageProps) {
             <span className="text-white font-bold text-xl">Task Turtle</span>
           </div>
 
-          <h2 className="text-white font-extrabold text-2xl mb-1">
-            {step === "info" ? "Create Account" : "Verify OTP"}
-          </h2>
-          <p className="text-white/50 text-sm mb-6">
-            {step === "info"
-              ? "Join thousands of users near you"
-              : `OTP sent to +91 ${phone}`}
-          </p>
-
-          {step === "info" ? (
+          {step === "role" ? (
             <>
-              <div className="flex rounded-2xl bg-white/5 border border-white/10 p-1 mb-5">
+              <h2 className="text-white font-extrabold text-2xl mb-1">
+                Get Started
+              </h2>
+              <p className="text-white/50 text-sm mb-6">
+                Choose your role and sign in securely
+              </p>
+
+              <div className="flex rounded-2xl bg-white/5 border border-white/10 p-1 mb-6">
                 <button
                   type="button"
                   className={`flex-1 rounded-xl py-2 text-sm font-semibold transition-all ${
@@ -128,91 +160,70 @@ export default function LoginPage({ onLogin, onBack }: LoginPageProps) {
                 </button>
               </div>
 
+              <Button
+                className="w-full rounded-full bg-brand-green text-brand-dark font-bold py-5 hover:bg-brand-green-hover flex items-center justify-center gap-2"
+                onClick={login}
+                disabled={isAuthLoading}
+                data-ocid="login.submit_button"
+              >
+                {isAuthLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Shield className="h-4 w-4" />
+                )}
+                {isLoggingIn
+                  ? "Opening login..."
+                  : checkingProfile
+                    ? "Loading profile..."
+                    : isInitializing
+                      ? "Initializing..."
+                      : "Login with Internet Identity"}
+              </Button>
+
+              <p className="text-white/30 text-xs text-center mt-3">
+                Secure, passwordless login · No password needed
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-white font-extrabold text-2xl mb-1">
+                One last step!
+              </h2>
+              <p className="text-white/50 text-sm mb-6">
+                What should we call you?
+              </p>
+
               <div className="space-y-4">
                 <div>
                   <Label className="text-white/70 text-sm mb-1 block">
-                    Full Name
+                    Your Name
                   </Label>
                   <Input
-                    placeholder="Rahul Sharma"
+                    placeholder="e.g. Rahul Sharma"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
+                    onKeyDown={(e) =>
+                      e.key === "Enter" && void handleSaveProfile()
+                    }
                     className="bg-white/10 border-white/20 text-white placeholder:text-white/30 rounded-xl"
-                    data-ocid="login.input"
-                  />
-                </div>
-                <div>
-                  <Label className="text-white/70 text-sm mb-1 block">
-                    Phone Number
-                  </Label>
-                  <Input
-                    placeholder="9876543210"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="bg-white/10 border-white/20 text-white placeholder:text-white/30 rounded-xl"
-                    data-ocid="login.input"
-                  />
-                </div>
-                <div>
-                  <Label className="text-white/70 text-sm mb-1 block">
-                    Email (optional)
-                  </Label>
-                  <Input
-                    placeholder="rahul@email.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="bg-white/10 border-white/20 text-white placeholder:text-white/30 rounded-xl"
+                    autoFocus
                     data-ocid="login.input"
                   />
                 </div>
                 <Button
                   className="w-full rounded-full bg-brand-green text-brand-dark font-bold py-5 hover:bg-brand-green-hover"
-                  onClick={handleSendOTP}
+                  onClick={() => void handleSaveProfile()}
+                  disabled={saving}
                   data-ocid="login.submit_button"
                 >
-                  Send OTP
+                  {saving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Continue →"
+                  )}
                 </Button>
               </div>
             </>
-          ) : (
-            <div className="space-y-4">
-              <div>
-                <Label className="text-white/70 text-sm mb-1 block">
-                  Enter OTP
-                </Label>
-                <Input
-                  placeholder="1234"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value)}
-                  className="bg-white/10 border-white/20 text-white placeholder:text-white/30 rounded-xl text-center text-2xl tracking-widest"
-                  maxLength={4}
-                  data-ocid="login.input"
-                />
-                <p className="text-white/30 text-xs mt-2 text-center">
-                  Demo: use 1234
-                </p>
-              </div>
-              <Button
-                className="w-full rounded-full bg-brand-green text-brand-dark font-bold py-5 hover:bg-brand-green-hover"
-                onClick={handleVerifyOTP}
-                disabled={loading}
-                data-ocid="login.submit_button"
-              >
-                {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Verify & Continue"
-                )}
-              </Button>
-              <button
-                type="button"
-                onClick={() => setStep("info")}
-                className="w-full text-white/40 hover:text-white text-sm transition-colors"
-                data-ocid="login.link"
-              >
-                ← Change details
-              </button>
-            </div>
           )}
         </div>
       </div>
