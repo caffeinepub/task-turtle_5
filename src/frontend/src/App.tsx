@@ -45,7 +45,11 @@ export default function App() {
         <LoginPage onLogin={handleLogin} onBack={() => setView("landing")} />
       )}
       {view === "customer-dashboard" && user && (
-        <CustomerDashboard user={user} onOpenLiveTask={openLiveTask} />
+        <CustomerDashboard
+          user={user}
+          onOpenLiveTask={openLiveTask}
+          onGoToTaskerHub={() => setView("tasker-dashboard")}
+        />
       )}
       {view === "tasker-dashboard" && user && (
         <TaskerDashboard user={user} onOpenLiveTask={openLiveTask} />
